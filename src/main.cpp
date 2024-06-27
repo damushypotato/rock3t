@@ -1,80 +1,131 @@
+#include <Arduino.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
 #include <Wire.h>
+#include <SPI.h>
+#include <SD.h>
+
+const int chipSelect = 10;
 
 Adafruit_MPU6050 mpu;
 
-float max_acceleration = 0.0;
+char filename[] = "LOG0000.CSV";
+
+bool serial_only = false;
+
+bool createNewFile();
+void printData(sensors_event_t a);
+void writeData(sensors_event_t a);
 
 void setup(void)
 {
-  Serial.begin(115200);
+    Serial.begin(115200);
 
-  // Try to initialize!
-  if (!mpu.begin())
-  {
-    Serial.println("Failed to find MPU6050 chip");
-    while (1)
+    if (!mpu.begin())
     {
-      delay(10);
+        Serial.println("Failed to find MPU6050 chip");
+        while (1)
+        {
+            delay(10);
+        }
     }
-  }
-  Serial.println("MPU6050 Found!");
 
-  // set accelerometer range to +-8G
-  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+    if (!SD.begin(chipSelect))
+    {
+        Serial.println("Card failed, or not present, switching to serial output");
+        serial_only = true;
+    }
 
-  // set gyro range to +- 500 deg/s
-  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+    mpu.setAccelerometerRange(MPU6050_RANGE_16_G);
+    mpu.setFilterBandwidth(MPU6050_BAND_260_HZ);
 
-  // set filter bandwidth to 21 Hz
-  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+    if (serial_only)
+    {
+        return;
+    }
 
-  delay(100);
+    for (uint8_t i = 0; i < 10000; i++)
+    {
+        filename[3] = i / 1000 + '0';
+        filename[4] = (i % 1000) / 100 + '0';
+        filename[5] = (i % 100) / 10 + '0';
+        filename[6] = i % 10 + '0';
+        if (!SD.exists(filename))
+        {
+            break;
+        }
+
+        if (i == 9999)
+        {
+            Serial.println("Couldnt create file. switching to serial output");
+            serial_only = true;
+            return;
+        }
+    }
+
+    File dataFile = SD.open(filename, FILE_WRITE);
+
+    if (!dataFile)
+    {
+        Serial.println("error opening file");
+        while (1)
+        {
+            delay(10);
+        }
+    }
+
+    dataFile.println("Timestamp, Ax, Ay, Az");
+
+    dataFile.close();
+
+    Serial.print("Logging to: ");
+    Serial.println(filename);
 }
 
 void loop()
 {
-  /* Get new sensor events with the readings */
-  sensors_event_t a, g, temp;
-  mpu.getEvent(&a, &g, &temp);
+    sensors_event_t a;
+    mpu.getAccelerometerSensor()->getEvent(&a);
 
-  /* Print out the values */
-  // Serial.print("Acceleration X: ");
-  // Serial.print(a.acceleration.x);
-  // Serial.print(", Y: ");
-  // Serial.print(a.acceleration.y);
-  // Serial.print(", Z: ");
-  // Serial.print(a.acceleration.z);
-  // Serial.println(" m/s^2");
+    if (serial_only)
+    {
+        printData(a);
+    }
+    else
+    {
+        writeData(a);
+    }
+}
 
-  // get the vector magnitude
-  float mag = sqrt(abs(a.acceleration.x * a.acceleration.x) + abs(a.acceleration.y * a.acceleration.y) + abs(a.acceleration.z * a.acceleration.z));
-  Serial.print("Acceleration: ");
-  Serial.print(mag);
-  Serial.println(" m/s^2");
+void printData(sensors_event_t a)
+{
+    Serial.print("X: ");
+    Serial.print(a.acceleration.x);
+    Serial.print(" Y: ");
+    Serial.print(a.acceleration.y);
+    Serial.print(" Z: ");
+    Serial.print(a.acceleration.z);
+    Serial.println(" m/s^2");
+}
 
-  if (mag > max_acceleration)
-  {
-    max_acceleration = mag;
-  }
+void writeData(sensors_event_t a)
+{
+    File dataFile = SD.open(filename, O_CREAT | O_WRITE | O_APPEND);
 
-  Serial.print("Max Acceleration: ");
-  Serial.print(max_acceleration);
-  Serial.println(" m/s^2");
+    if (dataFile)
+    {
+        dataFile.print(micros());
+        dataFile.print(", ");
+        dataFile.print(a.acceleration.x);
+        dataFile.print(", ");
+        dataFile.print(a.acceleration.y);
+        dataFile.print(", ");
+        dataFile.println(a.acceleration.z);
 
-  // Serial.print("Rotation X: ");
-  // Serial.print(g.gyro.x);
-  // Serial.print(", Y: ");
-  // Serial.print(g.gyro.y);
-  // Serial.print(", Z: ");
-  // Serial.print(g.gyro.z);
-  // Serial.println(" rad/s");
-
-  // Serial.print("Temperature: ");
-  // Serial.print(temp.temperature);
-  // Serial.println(" degC");
-
-  // Serial.println("");
-  delay(5);
+        dataFile.close();
+    }
+    else
+    {
+        Serial.println("error opening file");
+    }
 }
